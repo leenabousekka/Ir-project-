@@ -1,0 +1,11 @@
+# تجاهل مجلدات وملفات غير ضرورية
+data/
+venv/
+__pycache__/
+*.pkl
+*.joblib
+*.npz
+*.sqlite
+*.db
+.ipynb_checkpoints/
+evaluation/results.txt
