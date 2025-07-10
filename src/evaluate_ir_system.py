@@ -8,7 +8,7 @@ if len(sys.argv) < 2:
     print("⚠️ يرجى تمرير اسم مجموعة البيانات: trec أو msmarco")
     sys.exit(1)
 
-dataset_name = sys.argv[1].lower()
+dataset_name = sys.argv[1]
 if dataset_name not in ['trec', 'msmarco']:
     print("⚠️ اسم مجموعة البيانات غير صحيح. استخدم 'trec' أو 'msmarco'")
     sys.exit(1)

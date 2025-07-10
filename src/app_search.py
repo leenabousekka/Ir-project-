@@ -94,7 +94,7 @@ def search():
     if not query_id:
         query_id = query.replace(" ", "_")[:20]  # قيمة بديلة في حال لم يُعثر على الاستعلام
 
-    ds = form.dataset.data
+    
     method = form.method.data
     cluster_choice = form.cluster.data == 'yes'
 
@@ -267,13 +267,10 @@ def search():
     import subprocess
     eval_script = os.path.join(os.path.dirname(__file__), 'evaluate_ir_system.py')
     print("✅ Running evaluation...")
-    subprocess.run([sys.executable, eval_script])
+    subprocess.run([sys.executable, eval_script, ds])
     import subprocess
     eval_script = os.path.join(os.path.dirname(__file__), 'evaluate_ir_system.py')
-    print("✅ Running evaluation...")
-    subprocess.run([sys.executable, eval_script])
-    print("✅ Running evaluation...")
-    subprocess.run(['python', 'src/evaluate_ir_system.py', ds])
+    
     return render_template('search.html', form=form, show_search=True,
                            dataset=ds, method=method, query=query,
                            corrected_text=corrected_text,
