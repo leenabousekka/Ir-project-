@@ -1,6 +1,7 @@
 import os
-#import json
-#import pickle
+import json
+import pickle
+import sys
 import numpy as np
 from flask import Flask, render_template, request
 from sklearn.metrics.pairwise import cosine_similarity
@@ -266,11 +267,11 @@ def search():
     import subprocess
     eval_script = os.path.join(os.path.dirname(__file__), 'evaluate_ir_system.py')
     print("✅ Running evaluation...")
-    subprocess.run(['python', eval_script])
+    subprocess.run([sys.executable, eval_script])
     import subprocess
     eval_script = os.path.join(os.path.dirname(__file__), 'evaluate_ir_system.py')
     print("✅ Running evaluation...")
-    subprocess.run(['python', eval_script])
+    subprocess.run([sys.executable, eval_script])
     print("✅ Running evaluation...")
     subprocess.run(['python', 'src/evaluate_ir_system.py', ds])
     return render_template('search.html', form=form, show_search=True,
