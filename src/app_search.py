@@ -80,19 +80,37 @@ def search():
     form = SearchForm()
     query = request.form['query']
     ds = form.dataset.data
-    query_id = None
-    # تحديد ملف الاستعلام المناسب
+    # تحديد query_id من ملف الاستعلامات حسب نص الاستعلام المصحح
     queries_file = os.path.join(base, f"{ds}_queries.json")
+    query_id = None
+
     if os.path.exists(queries_file):
-        import json
-        with open(queries_file, encoding='utf-8') as f:
-            all_queries = json.load(f)
-            for q in all_queries:
-                if q["text"].strip().lower() == query.strip().lower():
-                    query_id = q["query_id"]
+        with open(queries_file, encoding='utf-8') as qf:
+            queries = json.load(qf)
+            for q in queries:
+                if q['text'].strip().lower() == query.strip().lower():
+                    query_id = q['query_id']
                     break
+
+    # إذا لم يُعثر على الاستعلام، استخدم نسخة مصطنعة من النص كـ fallback
     if not query_id:
-        query_id = query.replace(" ", "_")[:20]  # قيمة بديلة في حال لم يُعثر على الاستعلام
+        query_id = None
+        queries_file = os.path.join(base, f"{ds}_queries.json")
+        if os.path.exists(queries_file):
+            with open(queries_file, encoding='utf-8') as qf:
+                queries = json.load(qf)
+                for q in queries:
+                    if q['text'].strip().lower() == query.strip().lower():
+                        query_id = q['query_id']
+                        break
+        if not query_id:
+            print(f"⚠️ لم يتم العثور على query_id لهذا الاستعلام: {query}")
+            return render_template('search.html', form=form, show_search=True,
+                                dataset=ds, method=method, query=query,
+                                corrected_text=corrected_text,
+                                suggestions=[],
+                                results=[])
+
 
     
     method = form.method.data
@@ -226,7 +244,6 @@ def search():
     
     queries_file = os.path.join(base, f"{ds}_queries.json")
     if os.path.exists(queries_file):
-        import json
         with open(queries_file, encoding='utf-8') as qf:
             queries = json.load(qf)
             for q in queries:
@@ -239,10 +256,7 @@ def search():
     with open(results_path, 'a', encoding='utf-8') as f:
         for rank, idx in enumerate(top_k):
             doc_id = m['docs'][idx].get('doc_id', m['docs'][idx].get('id', f'doc_{idx}'))
-            #query_id = query_id
             f.write(f"{query_id}\tQ0\t{doc_id}\t{rank+1}\t{scores[idx]:.4f}\tSTANDARD\n")
-
-
 
 
     clustered_results = {}
