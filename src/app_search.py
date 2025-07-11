@@ -1,3 +1,5 @@
+# src/app_search.py (نسخة معدلة)
+
 import os
 import json
 import subprocess
@@ -19,6 +21,8 @@ app.config['SECRET_KEY'] = 'secret-key'
 base = os.path.join(os.path.dirname(__file__), '..', 'data')
 models = {}
 
+# اقتراحات W2V
+
 def get_suggestions(tokens, w2v_model, topn=5):
     suggestions = []
     for token in tokens:
@@ -27,24 +31,22 @@ def get_suggestions(tokens, w2v_model, topn=5):
             suggestions.extend([word for word, _ in similar])
     return list(set(suggestions))[:topn]
 
+# تحميل المستندات من SQLite
+
 def load_docs_from_db(dataset):
     db_path = os.path.join(base, 'documents.db')
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute(f"SELECT id, text, tokens FROM {dataset}")
-    docs = [{
-        'id': row[0],
-        'text': row[1],
-        'tokens': row[2].split()
-    } for row in cursor.fetchall()]
+    docs = [{'id': row[0], 'text': row[1], 'tokens': row[2].split()} for row in cursor.fetchall()]
     conn.close()
     return docs
 
-# تحميل النماذج والبيانات
+# تحميل النماذج
 for ds in ['trec', 'msmarco']:
-    print(f"[DEBUG] Loading data for: {ds}")
+    print(f" Loading data for: {ds}")
     docs = load_docs_from_db(ds)
-    print(f"[DEBUG] Loaded {ds} docs count:", len(docs))
+    print(f" Loaded {ds} docs count:", len(docs))
 
     tfidf_vec = joblib.load(os.path.join(base, f"{ds}_tfidf_vectorizer.joblib"))
     w2v = joblib.load(os.path.join(base, f"{ds}_word2vec.joblib"))
@@ -73,11 +75,12 @@ def index():
 def search():
     form = SearchForm()
     query = request.form['query']
-    ds = form.dataset.data  # الآن يتم تحديد dataset فورًا
+    ds = form.dataset.data
+    method = form.method.data
+    cluster_choice = form.cluster.data == 'yes'
 
-    # استخراج query_id من ملفات JSON
-    query_id = None
     queries_file = os.path.join(base, f"{ds}_queries.json")
+    query_id = None
     if os.path.exists(queries_file):
         with open(queries_file, encoding='utf-8') as f:
             all_queries = json.load(f)
@@ -86,19 +89,24 @@ def search():
                     query_id = q["query_id"]
                     break
     if not query_id:
-        query_id = query.replace(" ", "_")[:20]
-
-    method = form.method.data
-    cluster_choice = form.cluster.data == 'yes'
+        with open(queries_file, encoding='utf-8') as f:
+            all_queries = json.load(f)
+        new_id = str(int(all_queries[-1]['query_id']) + 1)
+        all_queries.append({
+            "query_id": new_id,
+            "text": query.strip().lower(),
+            "tokens": preprocess_text(query)
+        })
+        query_id = new_id
+        with open(queries_file, 'w', encoding='utf-8') as f:
+            json.dump(all_queries, f, indent=2)
 
     corrected_tokens = preprocess_text(query)
     corrected_text = ' '.join(corrected_tokens)
     m = models[ds]
     suggestions, doc_vectors = [], []
     scores = None
-    top_docs = []
 
-    # طرق البحث
     if method == 'tfidf':
         qv = m['tfidf_vec'].transform([corrected_text])
         scores = cosine_similarity(qv, m['tfidf_mat'])[0]
@@ -107,14 +115,11 @@ def search():
     elif method == 'word2vec':
         suggestions = get_suggestions(corrected_tokens, m['w2v'])
         vecs = [m['w2v'].wv[t] for t in corrected_tokens if t in m['w2v'].wv]
-        if not vecs:
-            scores = np.zeros(len(m['docs']))
-        else:
-            qv = np.mean(vecs, axis=0).reshape(1, -1)
-            for doc in m['docs']:
-                dvecs = [m['w2v'].wv[w] for w in doc['tokens'] if w in m['w2v'].wv]
-                doc_vectors.append(np.mean(dvecs, axis=0) if dvecs else np.zeros(m['w2v'].vector_size))
-            scores = cosine_similarity(qv, np.vstack(doc_vectors))[0]
+        qv = np.mean(vecs, axis=0).reshape(1, -1) if vecs else np.zeros((1, m['w2v'].vector_size))
+        for doc in m['docs']:
+            dvecs = [m['w2v'].wv[w] for w in doc['tokens'] if w in m['w2v'].wv]
+            doc_vectors.append(np.mean(dvecs, axis=0) if dvecs else np.zeros(m['w2v'].vector_size))
+        scores = cosine_similarity(qv, np.vstack(doc_vectors))[0]
     elif method == 'hybrid':
         tf_scores = cosine_similarity(m['tfidf_vec'].transform([corrected_text]), m['tfidf_mat'])[0]
         vecs = [m['w2v'].wv[t] for t in corrected_tokens if t in m['w2v'].wv]
@@ -150,32 +155,19 @@ def search():
                                corrected_text=corrected_text, suggestions=suggestions,
                                results=top_docs, rag_answer=answer)
 
-    # تجهيز النتائج
     top_k = np.argsort(scores)[::-1][:10]
     top_docs = [
-        {'id': m['docs'][i]['id'], 'text': m['docs'][i]['text'][:300], 'score': round(float(scores[i]), 4),
-         'vec': doc_vectors[i] if doc_vectors else None}
+        {'id': m['docs'][i]['id'], 'text': m['docs'][i]['text'][:300], 'score': round(float(scores[i]), 4)}
         for i in top_k
     ]
 
-    # حفظ results.txt بالصيغة الصحيحة باستخدام query_id
-    results_path = os.path.join(base, 'results.txt')
-    with open(results_path, 'a', encoding='utf-8') as f:
-        for rank, idx in enumerate(top_k):
-            doc_id = m['docs'][idx]['id']
-            f.write(f"{query_id}\tQ0\t{doc_id}\t{rank+1}\t{scores[idx]:.4f}\tSTANDARD\n")
+    run_dict = {}
+    run_dict[query_id] = {m['docs'][i]['id']: float(scores[i]) for i in top_k}
+    run_path = os.path.join(base, f'{ds}_{method}_run.json')
+    with open(run_path, 'w', encoding='utf-8') as rf:
+        json.dump(run_dict, rf, indent=2)
 
-    # توليد qrels بمطابقة dataset
-    qrels_path = os.path.join(os.path.dirname(__file__), '..', 'evaluation', 'qrels.txt')
-    with open(qrels_path, 'w', encoding='utf-8') as fq:
-        for i, doc in enumerate(top_docs[:3]):
-            fq.write(f"{query_id}\tQ0\t{doc['id']}\t1\n")
-        for doc in top_docs[3:]:
-            fq.write(f"{query_id}\tQ0\t{doc['id']}\t0\n")
-
-    # تشغيل سكربت التقييم المباشر
-    eval_script = os.path.join(os.path.dirname(__file__), 'evaluate_ir_system.py')
-    subprocess.run([sys.executable, eval_script, ds])
+    subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), 'evaluate.py'), ds, method])
 
     return render_template('search.html', form=form, show_search=True,
                            dataset=ds, method=method, query=query,
