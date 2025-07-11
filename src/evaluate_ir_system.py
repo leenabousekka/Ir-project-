@@ -37,10 +37,10 @@ with open(results_file, 'r', encoding='utf-8') as f:
         parts = line.strip().split()
         if len(parts) < 6:
             continue
-        query_text = ' '.join(parts[:-5])  # لتجميع نص الاستعلام بالكامل
+        qid = parts[0]
         doc_id = parts[-5]
         score = float(parts[-3])
-        results[query_text].append((doc_id, score))
+        results[qid].append((doc_id, score))
 
 # التقييم
 all_precisions = []
@@ -88,9 +88,9 @@ for query, retrieved_docs in results.items():
 # الطباعة
 if matched_queries > 0:
     print(f" Evaluated {matched_queries} matched queries")
-    print(f" Average Precision: {sum(all_precisions)/matched_queries:.4f}")
-    print(f" Average Recall: {sum(all_recalls)/matched_queries:.4f}")
-    print(f" MAP (Mean Average Precision): {sum(average_precisions)/matched_queries:.4f}")
-    print(f" MRR (Mean Reciprocal Rank): {sum(reciprocal_ranks)/matched_queries:.4f}")
+    print(f" Average Precision: {sum(all_precisions)/matched_queries:}")
+    print(f" Average Recall: {sum(all_recalls)/matched_queries:}")
+    print(f" MAP (Mean Average Precision): {sum(average_precisions)/matched_queries:}")
+    print(f" MRR (Mean Reciprocal Rank): {sum(reciprocal_ranks)/matched_queries:}")
 else:
     print("⚠️ لم يتم العثور على تطابق بين الاستعلامات في النتائج و qrels. تحقق من تنسيقهما.")
