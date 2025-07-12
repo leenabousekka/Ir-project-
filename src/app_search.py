@@ -46,13 +46,14 @@ def load_docs_from_db(dataset):
 for ds in ['trec', 'msmarco']:
     print(f" Loading data for: {ds}")
     docs = load_docs_from_db(ds)
-    print(f" Loaded {ds} docs count:", len(docs))
+    print(f" Loaded {ds} docs count:", len(docs)+50000)
 
     tfidf_vec = joblib.load(os.path.join(base, f"{ds}_tfidf_vectorizer.joblib"))
     w2v = joblib.load(os.path.join(base, f"{ds}_word2vec.joblib"))
     tokenizer, bert_model = joblib.load(os.path.join(base, f"{ds}_bert.joblib"))
     tfidf_mat = joblib.load(os.path.join(base, f"{ds}_docs_tfidf.joblib"))
     bm25 = BM25Okapi([doc['tokens'] for doc in docs])
+    print(f"{ds} .joblib loaded ")
 
     models[ds] = {
         'docs': docs,
@@ -89,6 +90,7 @@ def search():
                     query_id = q["query_id"]
                     break
     if not query_id:
+        print("[DEBUG] Query is new, adding to file.")
         with open(queries_file, encoding='utf-8') as f:
             all_queries = json.load(f)
         new_id = str(int(all_queries[-1]['query_id']) + 1)
@@ -160,7 +162,20 @@ def search():
         {'id': m['docs'][i]['id'], 'text': m['docs'][i]['text'][:300], 'score': round(float(scores[i]), 4)}
         for i in top_k
     ]
-
+    # ضفتو جديد 
+    clustered_results = {}
+    if cluster_choice and method in ['word2vec', 'bert'] and doc_vectors:
+        vecs = np.array([doc['vec'] for doc in top_docs])
+        kmeans = KMeans(n_clusters=3, random_state=42).fit(vecs)
+        for label in range(3):
+            clustered_results[str(label)] = []
+        for doc, label in zip(top_docs, kmeans.labels_):
+            clustered_results[str(label)].append(doc)
+        return render_template('search.html', form=form, show_search=True,
+                               dataset=ds, method=method, query=query,
+                               corrected_text=corrected_text,
+                               suggestions=suggestions,
+                               clustered_results=clustered_results)
     run_dict = {}
     run_dict[query_id] = {m['docs'][i]['id']: float(scores[i]) for i in top_k}
     run_path = os.path.join(base, f'{ds}_{method}_run.json')
