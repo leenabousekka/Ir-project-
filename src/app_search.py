@@ -1,4 +1,4 @@
-# src/app_search.py (نسخة معدلة)
+# src/app_search.py (نسخة معدلة بعد تصحيح clustering + إصلاح التقييم والاقتراحات)
 
 import os
 import json
@@ -20,8 +20,15 @@ app.config['SECRET_KEY'] = 'secret-key'
 
 base = os.path.join(os.path.dirname(__file__), '..', 'data')
 models = {}
+query_text_to_id = {}  # ✅ جديد: حفظ النصوص الأصلية للاستعلامات الرسمية فقط
 
-# اقتراحات W2V
+def get_suggestions_from_queries(query_tokens, queries):
+    suggestions = []
+    for q in queries:
+        tokens = q['tokens']
+        if any(token in tokens for token in query_tokens):
+            suggestions.append(q['text'])
+    return list(set(suggestions))[:5]
 
 def get_suggestions(tokens, w2v_model, topn=5):
     suggestions = []
@@ -30,8 +37,6 @@ def get_suggestions(tokens, w2v_model, topn=5):
             similar = w2v_model.wv.most_similar(token, topn=topn)
             suggestions.extend([word for word, _ in similar])
     return list(set(suggestions))[:topn]
-
-# تحميل المستندات من SQLite
 
 def load_docs_from_db(dataset):
     db_path = os.path.join(base, 'documents.db')
@@ -42,7 +47,6 @@ def load_docs_from_db(dataset):
     conn.close()
     return docs
 
-# تحميل النماذج
 for ds in ['trec', 'msmarco']:
     print(f" Loading data for: {ds}")
     docs = load_docs_from_db(ds)
@@ -65,6 +69,14 @@ for ds in ['trec', 'msmarco']:
         'bert_model': bert_model,
     }
 
+    # ✅ تحميل الاستعلامات الرسمية فقط
+    queries_file = os.path.join(base, f"{ds}_queries.json")
+    if os.path.exists(queries_file):
+        with open(queries_file, encoding='utf-8') as f:
+            queries = json.load(f)
+            query_text_to_id[ds] = {q['text'].strip().lower(): q['query_id'] for q in queries}
+            models[ds]['queries'] = queries
+
 print("✅ Models loaded. Open http://127.0.0.1:5000")
 
 @app.route('/', methods=['GET'])
@@ -80,33 +92,26 @@ def search():
     method = form.method.data
     cluster_choice = form.cluster.data == 'yes'
 
-    queries_file = os.path.join(base, f"{ds}_queries.json")
-    query_id = None
-    if os.path.exists(queries_file):
-        with open(queries_file, encoding='utf-8') as f:
-            all_queries = json.load(f)
-            for q in all_queries:
-                if q["text"].strip().lower() == query.strip().lower():
-                    query_id = q["query_id"]
-                    break
-    if not query_id:
-        print("[DEBUG] Query is new, adding to file.")
-        with open(queries_file, encoding='utf-8') as f:
-            all_queries = json.load(f)
-        new_id = str(int(all_queries[-1]['query_id']) + 1)
-        all_queries.append({
-            "query_id": new_id,
-            "text": query.strip().lower(),
-            "tokens": preprocess_text(query)
-        })
-        query_id = new_id
-        with open(queries_file, 'w', encoding='utf-8') as f:
-            json.dump(all_queries, f, indent=2)
-
     corrected_tokens = preprocess_text(query)
     corrected_text = ' '.join(corrected_tokens)
     m = models[ds]
-    suggestions, doc_vectors = [], []
+    queries_file = os.path.join(base, f"{ds}_queries.json")
+
+    # ✅ استرجاع query_id الرسمي أو توليد جديد
+    query_id = query_text_to_id.get(ds, {}).get(query.strip().lower())
+    if not query_id:
+        with open(queries_file, encoding='utf-8') as f:
+            all_queries = json.load(f)
+        new_id = str(int(all_queries[-1]['query_id']) + 1)
+        all_queries.append({"query_id": new_id, "text": query.strip().lower(), "tokens": corrected_tokens})
+        with open(queries_file, 'w', encoding='utf-8') as f:
+            json.dump(all_queries, f, indent=2)
+        query_id = new_id
+
+    # ✅ اقتراحات بناءً على الاستعلامات الرسمية فقط
+    suggestions = get_suggestions_from_queries(corrected_tokens, m.get('queries', []))
+
+    doc_vectors = []
     scores = None
 
     if method == 'tfidf':
@@ -115,7 +120,6 @@ def search():
     elif method == 'bm25':
         scores = m['bm25'].get_scores(corrected_tokens)
     elif method == 'word2vec':
-        suggestions = get_suggestions(corrected_tokens, m['w2v'])
         vecs = [m['w2v'].wv[t] for t in corrected_tokens if t in m['w2v'].wv]
         qv = np.mean(vecs, axis=0).reshape(1, -1) if vecs else np.zeros((1, m['w2v'].vector_size))
         for doc in m['docs']:
@@ -159,10 +163,15 @@ def search():
 
     top_k = np.argsort(scores)[::-1][:10]
     top_docs = [
-        {'id': m['docs'][i]['id'], 'text': m['docs'][i]['text'][:300], 'score': round(float(scores[i]), 4)}
+        {
+            'id': m['docs'][i]['id'],
+            'text': m['docs'][i]['text'][:300],
+            'score': round(float(scores[i]), 4),
+            'vec': doc_vectors[i] if doc_vectors else None
+        }
         for i in top_k
     ]
-    # ضفتو جديد 
+
     clustered_results = {}
     if cluster_choice and method in ['word2vec', 'bert'] and doc_vectors:
         vecs = np.array([doc['vec'] for doc in top_docs])
@@ -176,6 +185,7 @@ def search():
                                corrected_text=corrected_text,
                                suggestions=suggestions,
                                clustered_results=clustered_results)
+
     run_dict = {}
     run_dict[query_id] = {m['docs'][i]['id']: float(scores[i]) for i in top_k}
     run_path = os.path.join(base, f'{ds}_{method}_run.json')

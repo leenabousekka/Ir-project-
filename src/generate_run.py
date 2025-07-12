@@ -1,4 +1,3 @@
-# src/generate_run.py
 
 import os
 import json
@@ -87,7 +86,10 @@ def main(ds, method='tfidf', top_k=100):
     for q in queries:
         scores = compute_scores(method, q, docs, tfidf_vec, tfidf_mat, w2v, tokenizer, bert_model, bm25)
         top_idxs = np.argsort(scores)[::-1][:top_k]
-        run_dict[q['query_id']] = {docs[i]['id']: float(scores[i]) for i in top_idxs}
+        run_dict[q['query_id']] = {
+            docs[i].get('id') or docs[i].get('doc_id') or f"DOC{i}": float(scores[i])
+            for i in top_idxs
+        }
 
     # حفظ بصيغة run.json
     output_path = os.path.join(base, f'{ds}_{method}_run.json')
@@ -98,4 +100,8 @@ def main(ds, method='tfidf', top_k=100):
 
 
 if __name__ == '__main__':
-    main('trec', method='tfidf')  # أو 'bm25' أو 'word2vec' أو 'bert' أو 'hybrid'
+    import sys
+    if len(sys.argv) < 3:
+        print("⚠️ usage: python generate_run.py <dataset> <method>")
+    else:
+        main(sys.argv[1], sys.argv[2])
